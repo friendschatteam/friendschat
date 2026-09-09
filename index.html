@@ -128,12 +128,22 @@
     position:fixed; inset:0; background:rgba(20,14,32,0.42);
     backdrop-filter:blur(6px); display:flex; align-items:flex-end; justify-content:center;
     z-index:100;
+    opacity:0; animation:legalOverlayIn .38s cubic-bezier(.16,1,.3,1) forwards;
   }
+  .legal-overlay.closing{ animation:legalOverlayOut .32s cubic-bezier(.4,0,1,1) forwards; }
   .legal-sheet{
     width:100%; max-width:420px; max-height:78vh; background:#fff;
     border-radius:26px 26px 0 0; box-shadow:0 -20px 50px rgba(20,10,40,0.25);
     display:flex; flex-direction:column; overflow:hidden;
+    will-change:transform; backface-visibility:hidden;
+    transform:translate3d(0,100%,0);
+    animation:legalSheetIn .42s cubic-bezier(.16,1,.3,1) forwards;
   }
+  .legal-overlay.closing .legal-sheet{ animation:legalSheetOut .32s cubic-bezier(.4,0,1,1) forwards; }
+  @keyframes legalOverlayIn{ from{ opacity:0; } to{ opacity:1; } }
+  @keyframes legalOverlayOut{ from{ opacity:1; } to{ opacity:0; } }
+  @keyframes legalSheetIn{ from{ transform:translate3d(0,100%,0); } to{ transform:translate3d(0,0,0); } }
+  @keyframes legalSheetOut{ from{ transform:translate3d(0,0,0); } to{ transform:translate3d(0,100%,0); } }
   .legal-head{
     display:flex; align-items:center; justify-content:space-between;
     padding:20px 22px 14px; border-bottom:1px solid var(--field-border);
@@ -231,7 +241,7 @@
 
       <div class="field hidden" id="usernameField">
         <div class="input-wrap">
-          <input type="text" id="username" />
+          <input type="text" id="username" oninput="updateSubmitState()" />
           <span class="field-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4 20c0-4 3.5-6 8-6s8 2 8 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           </span>
@@ -239,16 +249,23 @@
         <div class="hint" id="usernameHint">بین ۴ تا ۲۰ کاراکتر باشد</div>
       </div>
 
-      <div class="field">
+      <div class="field" id="emailField">
         <div class="input-wrap">
-          <input type="email" id="email" />
+          <input type="email" id="email" oninput="updateSubmitState()" />
           <span class="field-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="3" stroke="currentColor" stroke-width="2"/><path d="M3 7l9 6 9-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </span>
         </div>
       </div>
 
-      <div class="field">
+      <div class="field hidden" id="otpField">
+        <div class="input-wrap">
+          <input type="text" id="otpCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" style="letter-spacing:8px; text-align:center; font-size:19px;" oninput="updateSubmitState()" />
+        </div>
+      </div>
+      <div class="forgot-link hidden" id="otpResendLink" onclick="resendOtpCode()">کد رو دوباره بفرست</div>
+
+      <div class="field" id="passwordField">
         <div class="input-wrap">
           <input type="password" id="password" oninput="checkPassword()" />
           <button type="button" class="eye-btn field-icon" onclick="togglePw('password')">
@@ -327,6 +344,9 @@
 
   let client = null;
   let isSignup = false; // login is the default landing view
+  let signupStep = 1; // 1=email, 2=otp code, 3=username+password
+  let signupEmail = '';
+  let pendingSignupEmail = '';
   const REDIRECT_URL = window.location.href.replace(/index\.html?$/, '') + 'app.html';
 
   const T = {
@@ -339,12 +359,16 @@
       confirmHint:'برای اطمینان، رمز عبور را دوباره وارد کنید',
       confirmMismatch:'رمزها با هم یکی نیستند', confirmMatch:'رمزها مطابقت دارند',
       terms:'من با <a href="javascript:void(0)" onclick="showLegal(&#39;terms&#39;)">شرایط استفاده</a> و <a href="javascript:void(0)" onclick="showLegal(&#39;privacy&#39;)">حریم خصوصی</a> موافقتم',
-      forgotLink:'رمز رو فراموش کردی؟', fillFields:'همه فیلدها رو پر کن', weakPass:'رمز عبور هنوز امن نیست',
+      forgotLink:'رمز رو فراموش کردی؟', fillFields:'همه فیلدها رو پر کن', invalidEmail:'ایمیل رو درست وارد کن (مثل name@example.com)', weakPass:'رمز عبور هنوز امن نیست',
       needTerms:'باید با قوانین موافقت کنی', processing:'در حال پردازش...',
       signupOk:'یه لینک تایید برات ایمیل شد!', loginOk:'ورود موفق بود! در حال انتقال...',
       forgotTitle:'بازیابی رمز عبور', forgotSub:'ایمیلت رو بزن تا لینک بازیابی بفرستیم',
       forgotBtn:'ارسال لینک بازیابی', backToLogin:'بازگشت به ورود', resetSent:'لینک بازیابی به ایمیلت ارسال شد',
-      alreadyIn:'قبلاً وارد شدی، در حال انتقال...' },
+      alreadyIn:'قبلاً وارد شدی، در حال انتقال...',
+      otpSendBtn:'ارسال کد تایید', otpTitle:'کد تایید', otpSub:'کد ۶ رقمی که به ایمیلت فرستادیم رو وارد کن',
+      otpBtn:'تایید کد', otpResend:'کد رو دوباره بفرست', otpInvalid:'کد اشتباهه یا منقضی شده', otpIncomplete:'کد ۶ رقمی رو کامل وارد کن',
+      codeSent:'کد تایید به ایمیلت ارسال شد', finishTitle:'تکمیل حساب', finishSub:'یوزرنیم و رمز عبورت رو انتخاب کن',
+      finishBtn:'تکمیل ثبت‌نام', finishOk:'حساب ساخته شد! در حال انتقال...' },
     en:{ dir:'ltr', loginTitle:'Sign in', loginSub:'Welcome back!', signupTitle:'Sign up', signupSub:'Join the community!',
       username:'Username', email:'Email', password:'Password', confirmPw:'Confirm password',
       loginBtn:'Sign in', signupBtn:'Sign up',
@@ -354,12 +378,16 @@
       confirmHint:'Re-enter your password to confirm',
       confirmMismatch:'Passwords do not match', confirmMatch:'Passwords match',
       terms:'I agree to the <a href="javascript:void(0)" onclick="showLegal(&#39;terms&#39;)">Terms</a> and <a href="javascript:void(0)" onclick="showLegal(&#39;privacy&#39;)">Privacy Policy</a>',
-      forgotLink:'Forgot password?', fillFields:'Fill in all fields', weakPass:'Password is not strong enough yet',
+      forgotLink:'Forgot password?', fillFields:'Fill in all fields', invalidEmail:'Enter a valid email (e.g. name@example.com)', weakPass:'Password is not strong enough yet',
       needTerms:'You must agree to the terms', processing:'Processing...',
       signupOk:'Verification link sent!', loginOk:'Signed in! Redirecting...',
       forgotTitle:'Reset password', forgotSub:"Enter your email and we'll send a reset link",
       forgotBtn:'Send reset link', backToLogin:'Back to sign in', resetSent:'Reset link sent to your email',
-      alreadyIn:'Already signed in, redirecting...' },
+      alreadyIn:'Already signed in, redirecting...',
+      otpSendBtn:'Send code', otpTitle:'Verification code', otpSub:'Enter the 6-digit code we sent to your email',
+      otpBtn:'Verify code', otpResend:'Resend code', otpInvalid:'Code is incorrect or expired', otpIncomplete:'Enter the full 6-digit code',
+      codeSent:'Verification code sent to your email', finishTitle:'Finish setting up', finishSub:'Choose a username and password',
+      finishBtn:'Complete sign up', finishOk:'Account created! Redirecting...' },
     ar:{ dir:'rtl', loginTitle:'تسجيل الدخول', loginSub:'مرحبًا بعودتك!', signupTitle:'إنشاء حساب', signupSub:'انضم إلى الأصدقاء!',
       username:'اسم المستخدم', email:'البريد الإلكتروني', password:'كلمة المرور', confirmPw:'تأكيد كلمة المرور',
       loginBtn:'دخول', signupBtn:'إنشاء حساب',
@@ -369,12 +397,16 @@
       confirmHint:'أعد إدخال كلمة المرور للتأكيد',
       confirmMismatch:'كلمتا المرور غير متطابقتين', confirmMatch:'كلمتا المرور متطابقتان',
       terms:'أوافق على <a href="javascript:void(0)" onclick="showLegal(&#39;terms&#39;)">الشروط</a> و<a href="javascript:void(0)" onclick="showLegal(&#39;privacy&#39;)">سياسة الخصوصية</a>',
-      forgotLink:'نسيت كلمة المرور؟', fillFields:'املأ جميع الحقول', weakPass:'كلمة المرور ليست قوية بعد',
+      forgotLink:'نسيت كلمة المرور؟', fillFields:'املأ جميع الحقول', invalidEmail:'أدخل بريدًا إلكترونيًا صحيحًا (مثل name@example.com)', weakPass:'كلمة المرور ليست قوية بعد',
       needTerms:'يجب الموافقة على الشروط', processing:'جارٍ المعالجة...',
       signupOk:'تم إرسال رابط التحقق!', loginOk:'تم تسجيل الدخول! جارٍ التحويل...',
       forgotTitle:'إعادة تعيين كلمة المرور', forgotSub:'أدخل بريدك وسنرسل رابطًا',
       forgotBtn:'إرسال رابط إعادة التعيين', backToLogin:'العودة لتسجيل الدخول', resetSent:'تم إرسال الرابط لبريدك',
-      alreadyIn:'تم تسجيل الدخول، جارٍ التحويل...' },
+      alreadyIn:'تم تسجيل الدخول، جارٍ التحويل...',
+      otpSendBtn:'إرسال الرمز', otpTitle:'رمز التحقق', otpSub:'أدخل الرمز المكون من 6 أرقام الذي أرسلناه إلى بريدك',
+      otpBtn:'تحقق من الرمز', otpResend:'إعادة إرسال الرمز', otpInvalid:'الرمز غير صحيح أو منتهي الصلاحية', otpIncomplete:'أدخل الرمز المكون من 6 أرقام كاملاً',
+      codeSent:'تم إرسال رمز التحقق إلى بريدك', finishTitle:'إكمال الحساب', finishSub:'اختر اسم مستخدم وكلمة مرور',
+      finishBtn:'إكمال التسجيل', finishOk:'تم إنشاء الحساب! جارٍ التحويل...' },
     he:{ dir:'rtl', loginTitle:'התחברות', loginSub:'ברוך שובך!', signupTitle:'הרשמה', signupSub:'הצטרפו לחברים!',
       username:'שם משתמש', email:'אימייל', password:'סיסמה', confirmPw:'אימות סיסמה',
       loginBtn:'התחברות', signupBtn:'הרשמה',
@@ -384,12 +416,16 @@
       confirmHint:'הזן שוב את הסיסמה לאימות',
       confirmMismatch:'הסיסמאות לא תואמות', confirmMatch:'הסיסמאות תואמות',
       terms:'אני מסכים ל<a href="javascript:void(0)" onclick="showLegal(&#39;terms&#39;)">תנאים</a> ול<a href="javascript:void(0)" onclick="showLegal(&#39;privacy&#39;)">מדיניות הפרטיות</a>',
-      forgotLink:'שכחת סיסמה?', fillFields:'מלא את כל השדות', weakPass:'הסיסמה עדיין לא חזקה מספיק',
+      forgotLink:'שכחת סיסמה?', fillFields:'מלא את כל השדות', invalidEmail:'הזן אימייל תקין (למשל name@example.com)', weakPass:'הסיסמה עדיין לא חזקה מספיק',
       needTerms:'עליך להסכים לתנאים', processing:'מעבד...',
       signupOk:'קישור אימות נשלח!', loginOk:'התחברת! מעביר...',
       forgotTitle:'איפוס סיסמה', forgotSub:'הזן את המייל שלך ונשלח קישור',
       forgotBtn:'שלח קישור איפוס', backToLogin:'חזרה להתחברות', resetSent:'קישור נשלח למייל שלך',
-      alreadyIn:'כבר מחובר, מעביר...' },
+      alreadyIn:'כבר מחובר, מעביר...',
+      otpSendBtn:'שלח קוד', otpTitle:'קוד אימות', otpSub:'הזן את קוד ה-6 הספרות שנשלח לאימייל שלך',
+      otpBtn:'אמת קוד', otpResend:'שלח קוד שוב', otpInvalid:'הקוד שגוי או פג תוקף', otpIncomplete:'הזן את קוד ה-6 הספרות במלואו',
+      codeSent:'קוד אימות נשלח לאימייל שלך', finishTitle:'השלמת החשבון', finishSub:'בחר שם משתמש וסיסמה',
+      finishBtn:'השלם הרשמה', finishOk:'החשבון נוצר! מעביר...' },
     zh:{ dir:'ltr', loginTitle:'登录', loginSub:'欢迎回来！', signupTitle:'注册', signupSub:'加入好友社区！',
       username:'用户名', email:'邮箱', password:'密码', confirmPw:'确认密码',
       loginBtn:'登录', signupBtn:'注册',
@@ -399,12 +435,16 @@
       confirmHint:'请再次输入密码以确认',
       confirmMismatch:'两次密码不一致', confirmMatch:'密码一致',
       terms:'我同意<a href="javascript:void(0)" onclick="showLegal(&#39;terms&#39;)">条款</a>和<a href="javascript:void(0)" onclick="showLegal(&#39;privacy&#39;)">隐私政策</a>',
-      forgotLink:'忘记密码？', fillFields:'请填写所有字段', weakPass:'密码强度还不够',
+      forgotLink:'忘记密码？', fillFields:'请填写所有字段', invalidEmail:'请输入有效的邮箱地址（如 name@example.com）', weakPass:'密码强度还不够',
       needTerms:'必须同意条款', processing:'处理中...',
       signupOk:'验证链接已发送！', loginOk:'登录成功！正在跳转...',
       forgotTitle:'重置密码', forgotSub:'输入邮箱，我们会发送重置链接',
       forgotBtn:'发送重置链接', backToLogin:'返回登录', resetSent:'重置链接已发送到您的邮箱',
-      alreadyIn:'已登录，正在跳转...' },
+      alreadyIn:'已登录，正在跳转...',
+      otpSendBtn:'发送验证码', otpTitle:'验证码', otpSub:'输入发送到您邮箱的6位验证码',
+      otpBtn:'验证', otpResend:'重新发送验证码', otpInvalid:'验证码错误或已过期', otpIncomplete:'请输入完整的6位验证码',
+      codeSent:'验证码已发送到您的邮箱', finishTitle:'完成账户设置', finishSub:'选择用户名和密码',
+      finishBtn:'完成注册', finishOk:'账户已创建！正在跳转...' },
     ko:{ dir:'ltr', loginTitle:'로그인', loginSub:'다시 오신 걸 환영해요!', signupTitle:'회원가입', signupSub:'친구들과 함께해요!',
       username:'사용자 이름', email:'이메일', password:'비밀번호', confirmPw:'비밀번호 확인',
       loginBtn:'로그인', signupBtn:'회원가입',
@@ -414,12 +454,16 @@
       confirmHint:'확인을 위해 비밀번호를 다시 입력하세요',
       confirmMismatch:'비밀번호가 일치하지 않아요', confirmMatch:'비밀번호가 일치해요',
       terms:'<a href="javascript:void(0)" onclick="showLegal(&#39;terms&#39;)">이용약관</a> 및 <a href="javascript:void(0)" onclick="showLegal(&#39;privacy&#39;)">개인정보처리방침</a>에 동의합니다',
-      forgotLink:'비밀번호를 잊으셨나요?', fillFields:'모든 필드를 입력하세요', weakPass:'비밀번호가 아직 안전하지 않아요',
+      forgotLink:'비밀번호를 잊으셨나요?', fillFields:'모든 필드를 입력하세요', invalidEmail:'올바른 이메일을 입력하세요 (예: name@example.com)', weakPass:'비밀번호가 아직 안전하지 않아요',
       needTerms:'약관에 동의해야 해요', processing:'처리 중...',
       signupOk:'인증 링크를 보냈어요!', loginOk:'로그인 성공! 이동 중...',
       forgotTitle:'비밀번호 재설정', forgotSub:'이메일을 입력하면 재설정 링크를 보내드려요',
       forgotBtn:'재설정 링크 보내기', backToLogin:'로그인으로 돌아가기', resetSent:'재설정 링크가 이메일로 전송되었어요',
-      alreadyIn:'이미 로그인됨, 이동 중...' },
+      alreadyIn:'이미 로그인됨, 이동 중...',
+      otpSendBtn:'코드 보내기', otpTitle:'인증 코드', otpSub:'이메일로 보낸 6자리 코드를 입력하세요',
+      otpBtn:'코드 확인', otpResend:'코드 다시 보내기', otpInvalid:'코드가 잘못되었거나 만료되었어요', otpIncomplete:'6자리 코드를 전부 입력하세요',
+      codeSent:'인증 코드가 이메일로 전송되었어요', finishTitle:'계정 완성하기', finishSub:'사용자 이름과 비밀번호를 선택하세요',
+      finishBtn:'가입 완료', finishOk:'계정이 생성되었어요! 이동 중...' },
   };
 
   const LEGAL_TEXT = {
@@ -476,7 +520,12 @@
     document.getElementById('legalOverlay').classList.remove('hidden');
   }
   function hideLegal(){
-    document.getElementById('legalOverlay').classList.add('hidden');
+    const overlay = document.getElementById('legalOverlay');
+    overlay.classList.add('closing');
+    setTimeout(()=>{
+      overlay.classList.add('hidden');
+      overlay.classList.remove('closing');
+    }, 320);
   }
 
   let currentLang = 'fa';
@@ -521,22 +570,55 @@
 
   function applyModeTexts(){
     const t = T[currentLang];
-    document.getElementById('formTitle').innerText = isSignup ? t.signupTitle : t.loginTitle;
-    document.getElementById('formSub').innerText = isSignup ? t.signupSub : t.loginSub;
-    document.getElementById('submitBtn').innerText = isSignup ? t.signupBtn : t.loginBtn;
+    if (!isSignup){
+      document.getElementById('formTitle').innerText = t.loginTitle;
+      document.getElementById('formSub').innerText = t.loginSub;
+      document.getElementById('submitBtn').innerText = t.loginBtn;
+    } else if (signupStep === 1){
+      document.getElementById('formTitle').innerText = t.signupTitle;
+      document.getElementById('formSub').innerText = t.signupSub;
+      document.getElementById('submitBtn').innerText = t.otpSendBtn;
+    } else if (signupStep === 2){
+      document.getElementById('formTitle').innerText = t.otpTitle;
+      document.getElementById('formSub').innerText = t.otpSub;
+      document.getElementById('submitBtn').innerText = t.otpBtn;
+    } else {
+      document.getElementById('formTitle').innerText = t.finishTitle;
+      document.getElementById('formSub').innerText = t.finishSub;
+      document.getElementById('submitBtn').innerText = t.finishBtn;
+    }
+    document.getElementById('otpResendLink').innerText = t.otpResend;
     document.getElementById('switchLine').innerHTML = isSignup
       ? `${t.switchToLoginText} <span onclick="toggleMode()">${t.switchToLoginWord}</span>`
       : `${t.switchToSignupText} <span onclick="toggleMode()">${t.switchToSignupWord}</span>`;
   }
 
+  function updateStepVisibility(){
+    const emailStep = !isSignup || signupStep === 1;
+    const otpStep = isSignup && signupStep === 2;
+    const finishStep = isSignup && signupStep === 3;
+    const passwordStep = !isSignup || finishStep; // login always needs password; signup only at step 3
+
+    document.getElementById('emailField').classList.toggle('hidden', !emailStep);
+    document.getElementById('otpField').classList.toggle('hidden', !otpStep);
+    document.getElementById('otpResendLink').classList.toggle('hidden', !otpStep);
+    document.getElementById('passwordField').classList.toggle('hidden', !passwordStep);
+    document.getElementById('usernameField').classList.toggle('hidden', !finishStep);
+    document.getElementById('confirmField').classList.toggle('hidden', !finishStep);
+    document.getElementById('termsRow').classList.toggle('hidden', !finishStep);
+    document.getElementById('passwordHint').classList.toggle('hidden', !finishStep);
+    document.getElementById('strengthBar').classList.toggle('hidden', !finishStep);
+    document.getElementById('forgotLink').classList.toggle('hidden', isSignup);
+    document.getElementById('switchLine').classList.toggle('hidden', isSignup && signupStep > 1);
+  }
+
   function toggleMode(){
     isSignup = !isSignup;
-    document.getElementById('usernameField').classList.toggle('hidden', !isSignup);
-    document.getElementById('confirmField').classList.toggle('hidden', !isSignup);
-    document.getElementById('termsRow').classList.toggle('hidden', !isSignup);
-    document.getElementById('passwordHint').classList.toggle('hidden', !isSignup);
-    document.getElementById('strengthBar').classList.toggle('hidden', !isSignup);
-    document.getElementById('forgotLink').classList.toggle('hidden', isSignup);
+    signupStep = 1;
+    signupEmail = '';
+    document.getElementById('email').value = '';
+    document.getElementById('otpCode').value = '';
+    updateStepVisibility();
     document.getElementById('msg').innerText = '';
     applyModeTexts();
     updateSubmitState();
@@ -585,12 +667,12 @@
     updateSubmitState();
   }
 
+  function isValidEmail(email){
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  }
+
   function updateSubmitState(){
-    if (!isSignup){ document.getElementById('submitBtn').disabled = false; return; }
-    const pass = document.getElementById('password').value;
-    const conf = document.getElementById('confirmPassword').value;
-    const termsOk = document.getElementById('termsCheck').checked;
-    document.getElementById('submitBtn').disabled = !(isPasswordValid() && conf === pass && conf !== '' && termsOk);
+    document.getElementById('submitBtn').disabled = false;
   }
 
   function showForgot(){
@@ -615,36 +697,85 @@
 
   async function handleSubmit(){
     const t = T[currentLang];
-    const email = document.getElementById('email').value.trim();
-    const password = document.getElementById('password').value;
-    const username = document.getElementById('username').value.trim();
     const msg = document.getElementById('msg');
     msg.className = '';
 
-    if(!email || !password){ msg.innerText = t.fillFields; msg.className = 'fail'; return; }
-
-    if(isSignup){
-      if(!isPasswordValid()){ msg.innerText = t.weakPass; msg.className = 'fail'; return; }
-      if(!document.getElementById('termsCheck').checked){ msg.innerText = t.needTerms; msg.className = 'fail'; return; }
-
-      msg.innerText = t.processing;
-      const { data, error } = await client.auth.signUp({
-        email, password, options: { emailRedirectTo: REDIRECT_URL }
-      });
-      if(error){ msg.innerText = error.message; msg.className = 'fail'; return; }
-      if(data.user){
-        await client.from('profiles').update({
-          username: username || email, display_name: username || email
-        }).eq('id', data.user.id);
-      }
-      msg.innerText = t.signupOk; msg.className = 'ok';
-    } else {
+    if(!isSignup){
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      if(!email || !password){ msg.innerText = t.fillFields; msg.className = 'fail'; return; }
+      if(!isValidEmail(email)){ msg.innerText = t.invalidEmail; msg.className = 'fail'; return; }
       msg.innerText = t.processing;
       const { error } = await client.auth.signInWithPassword({ email, password });
       if(error){ msg.innerText = error.message; msg.className = 'fail'; return; }
       msg.innerText = t.loginOk; msg.className = 'ok';
       setTimeout(() => { window.location.href = 'app.html'; }, 700);
+      return;
     }
+
+    if(signupStep === 1){
+      const email = document.getElementById('email').value.trim();
+      if(!email){ msg.innerText = t.fillFields; msg.className = 'fail'; return; }
+      if(!isValidEmail(email)){ msg.innerText = t.invalidEmail; msg.className = 'fail'; return; }
+      msg.innerText = t.processing;
+      const { error } = await client.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+      if(error){ msg.innerText = error.message; msg.className = 'fail'; return; }
+      signupEmail = email;
+      signupStep = 2;
+      updateStepVisibility();
+      applyModeTexts();
+      updateSubmitState();
+      msg.innerText = t.codeSent; msg.className = 'ok';
+      return;
+    }
+
+    if(signupStep === 2){
+      const code = document.getElementById('otpCode').value.trim();
+      if(!code){ msg.innerText = t.fillFields; msg.className = 'fail'; return; }
+      if(code.length !== 6){ msg.innerText = t.otpIncomplete; msg.className = 'fail'; return; }
+      msg.innerText = t.processing;
+      const { error } = await client.auth.verifyOtp({ email: signupEmail, token: code, type: 'email' });
+      if(error){ msg.innerText = t.otpInvalid; msg.className = 'fail'; return; }
+      signupStep = 3;
+      updateStepVisibility();
+      applyModeTexts();
+      updateSubmitState();
+      msg.innerText = '';
+      return;
+    }
+
+    // signupStep === 3: finish account setup
+    const pass = document.getElementById('password').value;
+    const conf = document.getElementById('confirmPassword').value;
+    const username = document.getElementById('username').value.trim();
+    if(!username || !pass || !conf){ msg.innerText = t.fillFields; msg.className = 'fail'; return; }
+    if(username.length < 4){ msg.innerText = t.usernameHint; msg.className = 'fail'; return; }
+    if(!isPasswordValid()){ msg.innerText = t.weakPass; msg.className = 'fail'; return; }
+    if(conf !== pass){ msg.innerText = t.confirmMismatch; msg.className = 'fail'; return; }
+    if(!document.getElementById('termsCheck').checked){ msg.innerText = t.needTerms; msg.className = 'fail'; return; }
+
+    msg.innerText = t.processing;
+    const { error: pwError } = await client.auth.updateUser({ password: pass });
+    if(pwError){ msg.innerText = pwError.message; msg.className = 'fail'; return; }
+
+    const { data: userData } = await client.auth.getUser();
+    if(userData && userData.user){
+      await client.from('profiles').update({
+        username: username, display_name: username
+      }).eq('id', userData.user.id);
+    }
+
+    msg.innerText = t.finishOk; msg.className = 'ok';
+    setTimeout(() => { window.location.href = 'app.html'; }, 700);
+  }
+
+  async function resendOtpCode(){
+    const t = T[currentLang];
+    const msg = document.getElementById('msg');
+    msg.innerText = t.processing; msg.className = '';
+    const { error } = await client.auth.signInWithOtp({ email: signupEmail, options: { shouldCreateUser: true } });
+    if(error){ msg.innerText = error.message; msg.className = 'fail'; return; }
+    msg.innerText = t.codeSent; msg.className = 'ok';
   }
 
   (async () => {
