@@ -176,9 +176,9 @@
   @keyframes ambientShift{ 0%,100%{ background-position:0% 0%, 100% 0%, 50% 100%; } 50%{ background-position:6% 4%, 94% 6%, 50% 96%; } }
   @keyframes shimmer{
     0%{ transform:translateX(-120%) skewX(-15deg); opacity:0; }
-    8%{ opacity:1; }
-    32%{ transform:translateX(220%) skewX(-15deg); opacity:1; }
-    38%{ opacity:0; }
+    1%{ opacity:1; }
+    4%{ transform:translateX(220%) skewX(-15deg); opacity:1; }
+    4.6%{ opacity:0; }
     100%{ opacity:0; }
   }
 
@@ -201,7 +201,7 @@
   button.submit::after{
     content:''; position:absolute; top:0; bottom:0; left:0; width:40%;
     background:linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
-    animation:shimmer 4.6s ease-in-out infinite; animation-delay:1.2s;
+    animation:shimmer 60s ease-in-out infinite; animation-delay:1.5s;
   }
 </style>
 </head>
